@@ -35,7 +35,21 @@ def main():
         types.Content(role="user", parts=[types.Part(text=user_prompt)]),
                 ]
 
-    generate_content(client, messages, sys.argv[-1])
+    iters = 0
+    while True:
+        iters += 1
+        if iters > 20:
+            print(f"Maximum iterations reached.")
+            sys.exit(1)
+
+        try:
+            final_response = generate_content(client, messages, args)
+            if final_response:
+                print("Final response:")
+                print(final_response)
+                break
+        except Exception as e:
+            print(f"Error in generate_content: {e}")
 
 def call_function(function_call_part, verbose=False):
     function_name = function_call_part.name
@@ -88,10 +102,36 @@ def generate_content(client, messages, args):
     verbose_flag = (args == '--verbose')
 
     if verbose_flag:
-        print(f"User prompt: {messages}")
-        print(f"\nResponse: {response.text}")
         print(f"Prompt tokens: {response.usage_metadata.prompt_token_count}\nResponse tokens: {response.usage_metadata.candidates_token_count}")
         print
+
+    if response.candidates:
+        for candidate in response.candidates:
+            function_call_content = candidate.content
+            messages.append(function_call_content)
+
+    if not response.function_calls:
+        return response.text
+
+    function_responses = []
+    for function_call_part in response.function_calls:
+        function_call_result = call_function(function_call_part, verbose_flag)
+        if (
+            not function_call_result.parts
+            or not function_call_result.parts[0].function_response
+        ):
+            raise Exception("empty function call result")
+        if verbose_flag:
+            print(f"-> {function_call_result.parts[0].function_response.response}")
+        function_responses.append(function_call_result.parts[0])
+
+    if not function_responses:
+        raise Exception("no function responses generated, exiting.")
+
+    messages.append(types.Content(role="tool", parts=function_responses))
+
+    '''
+
     if response.function_calls:
         for function_call_part in response.function_calls:
             function_call_result = call_function(function_call_part, verbose_flag)
@@ -103,6 +143,7 @@ def generate_content(client, messages, args):
                 raise Exception("Error:  no function called")
     else:
         print(response.text)
+    '''
     
 if __name__ == "__main__":
     main()
